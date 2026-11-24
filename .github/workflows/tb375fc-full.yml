@@ -44,6 +44,16 @@ jobs:
           sudo apt-get install -y --no-install-recommends mkbootimg 2>/dev/null || true
           command -v mkbootimg || echo "mkbootimg missing"
           command -v busybox || echo "busybox missing"
+          # Debian/Ubuntu mkbootimg 34.0.4 packaging bug: gki module missing.
+          # Fetch the AOSP gki module + avbtool it imports.
+          AOSP="https://android.googlesource.com/platform/system/tools/mkbootimg/+/refs/heads/main"
+          sudo mkdir -p /usr/local/lib/android-tools/gki
+          curl -sL "$AOSP/gki/generate_gki_certificate.py?format=TEXT" | base64 -d | sudo tee /usr/local/lib/android-tools/gki/generate_gki_certificate.py > /dev/null
+          curl -sL "$AOSP/gki/__init__.py?format=TEXT" | base64 -d | sudo tee /usr/local/lib/android-tools/gki/__init__.py > /dev/null
+          curl -sL "https://android.googlesource.com/platform/external/avb/+/refs/heads/main/avbtool.py?format=TEXT" | base64 -d | sudo tee /usr/local/lib/android-tools/avbtool.py > /dev/null
+          echo "PYTHONPATH=/usr/local/lib/android-tools" >> "$GITHUB_ENV"
+          chmod +x /usr/local/lib/android-tools/avbtool.py
+          PYTHONPATH=/usr/local/lib/android-tools python3 -c "from gki.generate_gki_certificate import generate_gki_certificate; print('gki OK')"
 
       - name: Generate SSH key
         run: |
