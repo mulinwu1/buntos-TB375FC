@@ -122,7 +122,7 @@ jobs:
           Bootloader=none
           Packages=openssh-server systemd-sysv iproute2 iputils-ping less vim-tiny procps
           MOKONF
-          sudo -E mkosi -C "$R" --output-directory="$O" -f build
+          sudo env "PATH=$PATH" "PYTHONPATH=$PYTHONPATH" mkosi -C "$R" --output-directory="$O" -f build
           sudo chown -R "$(id -u):$(id -g)" "$O"
           ls -lh "$O"
 
