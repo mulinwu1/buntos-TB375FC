@@ -1,0 +1,115 @@
+name: TB375FC full minimal Linux
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Kernel + boot images + minimal rootfs
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 480
+
+    env:
+      BUNTOS_BUILD_DIR: ${{ github.workspace }}/build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential flex bison bc libssl-dev libncurses-dev \
+            libelf-dev dwarves rsync curl xz-utils zstd lz4 cpio \
+            gzip python3 kmod file wget git busybox-static \
+            unzip squashfs-tools openssl
+          echo "=== runner ==="; uname -a; nproc; free -h; df -h .
+
+      - name: Build kernel
+        timeout-minutes: 180
+        run: kernel/tb375fc/build.sh all
+
+      - name: Check kernel
+        run: |
+          B="$BUNTOS_BUILD_DIR/tb375fc"
+          ls -lh "$B/out/arch/arm64/boot/Image"
+          ls -lh "$B/out/arch/arm64/boot/dts/mediatek/mt6897-lenovo-tb375fc.dtb"
+          du -sh "$B/modules"
+
+      - name: Install boot tools
+        run: |
+          sudo apt-get install -y --no-install-recommends mkbootimg 2>/dev/null || true
+          command -v mkbootimg || echo "mkbootimg missing"
+          command -v busybox || echo "busybox missing"
+
+      - name: Generate SSH key
+        run: |
+          mkdir -p "$BUNTOS_BUILD_DIR/ssh"
+          ssh-keygen -t ed25519 -N '' -f "$BUNTOS_BUILD_DIR/ssh/id_ed25519"
+          cat "$BUNTOS_BUILD_DIR/ssh/id_ed25519.pub"
+
+      - name: Build initramfs
+        timeout-minutes: 30
+        run: |
+          B="$BUNTOS_BUILD_DIR/tb375fc"
+          bsp/lenovo-tb375fc/initramfs/mkinitramfs.sh --modules "$B/modules"
+          ls -lh "$B/images/initramfs.cpio.lz4"
+
+      - name: Build boot images
+        timeout-minutes: 30
+        run: |
+          B="$BUNTOS_BUILD_DIR/tb375fc"
+          K="$B/out/arch/arm64/boot"
+          CMDLINE="console=ttyS0,921600n8 console=tty0 earlycon clk_ignore_unused pd_ignore_unused regulator_ignore_unused root=PARTLABEL=buntos rootfstype=btrfs rw systemd.firstboot=no buntos.usbdebug=1 systemd.set_credential_binary=ssh.authorized_keys.root:$(base64 -w0 "$BUNTOS_BUILD_DIR/ssh/id_ed25519.pub")"
+          bsp/lenovo-tb375fc/boot/mkimages.sh \
+            --kernel "$K/Image" \
+            --dtb "$K/dts/mediatek/mt6897-lenovo-tb375fc.dtb" \
+            --initramfs "$B/images/initramfs.cpio.lz4" \
+            --cmdline "$CMDLINE"
+          ls -lh "$B/images/"*.img
+          cat "$B/images/images.txt"
+
+      - name: Install mkosi
+        timeout-minutes: 20
+        run: |
+          python3 -m pip install --break-system-packages pipx
+          python3 -m pipx install "git+https://github.com/systemd/mkosi.git@$(sed -n 's/^MKOSI_VERSION=//p' tools/devvm/setup.sh)"
+          echo "$(python3 -m pipx environment --value PIPX_BIN_DIR)" >> "$GITHUB_PATH"
+
+      - name: Build minimal rootfs
+        timeout-minutes: 120
+        run: |
+          O="$BUNTOS_BUILD_DIR/tb375fc/rootfs-out"
+          PUB=$(base64 -w0 "$BUNTOS_BUILD_DIR/ssh/id_ed25519.pub")
+          mkosi -C bsp/lenovo-tb375fc/initramfs/test-image \
+            --include="$PWD/bsp/lenovo-tb375fc" \
+            --output-directory="$O" -f build
+          ls -lh "$O"
+
+      - name: Package artifacts
+        run: |
+          S="$BUNTOS_BUILD_DIR/artifacts"
+          mkdir -p "$S"
+          B="$BUNTOS_BUILD_DIR/tb375fc"
+          cp "$B/images/boot.img" "$S/"
+          cp "$B/images/init_boot.img" "$S/"
+          cp "$B/images/vendor_boot.img" "$S/"
+          cp "$B/images/dtbo.img" "$S/"
+          cp "$B/images/images.txt" "$S/"
+          cp "$BUNTOS_BUILD_DIR/tb375fc/rootfs-out/buntos.root-arm64.raw" "$S/" 2>/dev/null || true
+          cp "$BUNTOS_BUILD_DIR/ssh/id_ed25519" "$S/ssh_private_key" 2>/dev/null || true
+          cp "$BUNTOS_BUILD_DIR/ssh/id_ed25519.pub" "$S/" 2>/dev/null || true
+          echo "=== artifacts ==="; ls -lh "$S"
+
+      - name: Upload all
+        uses: actions/upload-artifact@v4
+        with:
+          name: tb375fc-flash-package
+          path: ${{ env.BUNTOS_BUILD_DIR }}/artifacts/*
+          retention-days: 30
