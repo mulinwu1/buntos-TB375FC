@@ -122,7 +122,8 @@ jobs:
           Bootloader=none
           Packages=openssh-server systemd-sysv iproute2 iputils-ping less vim-tiny procps
           MOKONF
-          mkosi -C "$R" --output-directory="$O" -f build
+          sudo -E mkosi -C "$R" --output-directory="$O" -f build
+          sudo chown -R "$(id -u):$(id -g)" "$O"
           ls -lh "$O"
 
       - name: Package artifacts
