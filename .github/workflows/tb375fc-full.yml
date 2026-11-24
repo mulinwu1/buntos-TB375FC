@@ -12,6 +12,9 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 480
 
+    env:
+      MKOSI_FORCE_USERNS_FALLBACK: "1"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -93,6 +96,8 @@ jobs:
       - name: Install mkosi
         timeout-minutes: 20
         run: |
+          sudo sysctl --ignore --write kernel.apparmor_restrict_unprivileged_unconfined=0
+          sudo sysctl --ignore --write kernel.apparmor_restrict_unprivileged_userns=0
           python3 -m pip install --break-system-packages pipx
           python3 -m pipx install "git+https://github.com/systemd/mkosi.git@$(sed -n 's/^MKOSI_VERSION=//p' tools/devvm/setup.sh)"
           echo "$(python3 -m pipx environment --value PIPX_BIN_DIR)" >> "$GITHUB_PATH"
