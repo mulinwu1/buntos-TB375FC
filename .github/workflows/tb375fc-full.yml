@@ -28,8 +28,16 @@ jobs:
             unzip squashfs-tools openssl
           echo "=== runner ==="; uname -a; nproc; free -h; df -h .
 
+      - name: Restore kernel cache
+        id: kernel-cache
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/buntos-build/tb375fc
+          key: tb375fc-kernel-${{ hashFiles('kernel/tb375fc/**') }}
+
       - name: Build kernel
         timeout-minutes: 180
+        if: steps.kernel-cache.outputs.cache-hit != 'true'
         run: kernel/tb375fc/build.sh all
 
       - name: Check kernel
@@ -48,11 +56,11 @@ jobs:
           # Fetch the AOSP gki module + avbtool it imports.
           AOSP="https://android.googlesource.com/platform/system/tools/mkbootimg/+/refs/heads/main"
           sudo mkdir -p /usr/local/lib/android-tools/gki
-          curl -sL "$AOSP/gki/generate_gki_certificate.py?format=TEXT" | base64 -d | sudo tee /usr/local/lib/android-tools/gki/generate_gki_certificate.py > /dev/null
-          curl -sL "$AOSP/gki/__init__.py?format=TEXT" | base64 -d | sudo tee /usr/local/lib/android-tools/gki/__init__.py > /dev/null
-          curl -sL "https://android.googlesource.com/platform/external/avb/+/refs/heads/main/avbtool.py?format=TEXT" | base64 -d | sudo tee /usr/local/lib/android-tools/avbtool.py > /dev/null
+          sudo touch /usr/local/lib/android-tools/gki/__init__.py
+          curl -sL "$AOSP/gki/generate_gki_certificate.py?format=TEXT" | base64 -d 2>/dev/null | sudo tee /usr/local/lib/android-tools/gki/generate_gki_certificate.py > /dev/null
+          curl -sL "https://android.googlesource.com/platform/external/avb/+/refs/heads/main/avbtool.py?format=TEXT" | base64 -d 2>/dev/null | sudo tee /usr/local/lib/android-tools/avbtool.py > /dev/null
+          sudo chmod +x /usr/local/lib/android-tools/avbtool.py
           echo "PYTHONPATH=/usr/local/lib/android-tools" >> "$GITHUB_ENV"
-          chmod +x /usr/local/lib/android-tools/avbtool.py
           PYTHONPATH=/usr/local/lib/android-tools python3 -c "from gki.generate_gki_certificate import generate_gki_certificate; print('gki OK')"
 
       - name: Generate SSH key
