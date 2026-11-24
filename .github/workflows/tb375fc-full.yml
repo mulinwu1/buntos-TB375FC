@@ -28,20 +28,27 @@ jobs:
             build-essential flex bison bc libssl-dev libncurses-dev \
             libelf-dev dwarves rsync curl xz-utils zstd lz4 cpio \
             gzip python3 kmod file wget git busybox-static \
-            unzip squashfs-tools openssl
+            unzip squashfs-tools openssl debian-archive-keyring
           echo "=== runner ==="; uname -a; nproc; free -h; df -h .
 
       - name: Restore kernel cache
         id: kernel-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: /home/runner/buntos-build/tb375fc
-          key: tb375fc-kernel-${{ hashFiles('kernel/tb375fc/**') }}
+          key: tb375fc-kernel-v1
 
       - name: Build kernel
         timeout-minutes: 180
         if: steps.kernel-cache.outputs.cache-hit != 'true'
         run: kernel/tb375fc/build.sh all
+
+      - name: Save kernel cache
+        if: steps.kernel-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /home/runner/buntos-build/tb375fc
+          key: tb375fc-kernel-v1
 
       - name: Check kernel
         run: |
