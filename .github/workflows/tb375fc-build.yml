@@ -1,0 +1,60 @@
+name: TB375FC minimal Linux build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build kernel + boot images + minimal rootfs
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+
+    env:
+      BOARD: tb375fc
+      BUNTOS_BUILD_DIR: ${{ github.workspace }}/build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential flex bison bc libssl-dev libncurses-dev \
+            libelf-dev dwarves rsync curl xz-utils zstd lz4 cpio \
+            gzip python3 kmod file wget git
+          echo "=== runner ==="
+          uname -a
+          nproc
+          free -h
+          df -h .
+
+      - name: Build kernel (Image + DTB + modules)
+        timeout-minutes: 180
+        run: |
+          JOBS=$(nproc)
+          echo "JOBS=$JOBS"
+          kernel/tb375fc/build.sh all
+
+      - name: Check kernel outputs
+        run: |
+          B="$BUNTOS_BUILD_DIR/tb375fc"
+          ls -lh "$B/out/arch/arm64/boot/Image"
+          ls -lh "$B/out/arch/arm64/boot/dts/mediatek/mt6897-lenovo-tb375fc.dtb"
+          echo "modules:"
+          du -sh "$B/modules"
+
+      - name: Upload kernel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tb375fc-kernel
+          path: |
+            ${{ env.BUNTOS_BUILD_DIR }}/tb375fc/out/arch/arm64/boot/Image
+            ${{ env.BUNTOS_BUILD_DIR }}/tb375fc/out/arch/arm64/boot/dts/mediatek/mt6897-lenovo-tb375fc.dtb
+          retention-days: 30
