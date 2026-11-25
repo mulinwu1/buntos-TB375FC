@@ -45,20 +45,24 @@ jobs:
           free_gb() { df -B1 "$1" | tail -1 | awk '{printf "%.0f", $4/1024/1024/1024}'; }
           echo "free GB: $(free_gb "$WORK")"
 
-      - name: 安装基础依赖
+      - name: 内核构建依赖
+        # runner 自带 pipx/docker/git/python。只装内核编译真正缺的包。
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential flex bison bc libssl-dev libncurses-dev libelf-dev dwarves \
-            rsync curl xz-utils zstd lz4 cpio gzip python3 kmod file wget git \
-            busybox-static unzip squashfs-tools openssl debian-archive-keyring \
-            python3-venv pipx docker.io
-          echo "mkosi version pinned in tools/devvm/setup.sh"
-          python3 -m pip install --break-system-packages pipx
-          python3 -m pipx install "git+https://github.com/systemd/mkosi.git@$(sed -n 's/^MKOSI_VERSION=//p' tools/devvm/setup.sh)"
-          echo "$(python3 -m pipx environment --value PIPX_BIN_DIR)" >> "$GITHUB_PATH"
-          sudo systemctl start docker || true
+            flex bison bc libssl-dev libelf-dev dwarves rsync \
+            xz-utils zstd lz4 cpio kmod
+          gcc --version | head -1; make --version | head -1
           docker version 2>&1 | head -8
+
+      - name: mkosi
+        # 完全照抄作者 x86-64.yml 的 mkosi 安装
+        run: |
+          mkosi_version=$(sed -n 's/^MKOSI_VERSION=//p' tools/devvm/setup.sh)
+          pipx install "git+https://github.com/systemd/mkosi.git@$mkosi_version"
+          bin=$(pipx environment --value PIPX_BIN_DIR)
+          echo "$bin" >>"$GITHUB_PATH"
+          "$bin/mkosi" --version
 
       - name: 内核 deb (build.sh image)
         id: kernel
