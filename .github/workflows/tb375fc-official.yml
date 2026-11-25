@@ -1,0 +1,146 @@
+name: TB375FC official full image
+
+# 原样调用 buntOS 项目脚本构建完整 TB375FC 镜像（不改项目源码）。
+# 顺序照 docs/dev/environment.md + x86-64.yml:
+#   1. 内核 kernel/tb375fc/build.sh image  -> linux-image-*.deb
+#   2. mesa / upower / vaapi 三个设备包
+#   3. tools-tree.sh (Debian13 工具树, Docker)
+#   4. cargo-debian.sh build (自研 Rust 组件)
+#   5. tools/image/build.sh lenovo-tb375fc (完整镜像)
+# 产物: BUNTOS_BUILD_DIR/lenovo-tb375fc/ 下的 root 分区 raw + boot 镜像。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Official full image (lenovo-tb375fc)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 600
+    env:
+      MKOSI_FORCE_USERNS_FALLBACK: "1"
+      BOARD: lenovo-tb375fc
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: 环境与磁盘
+        run: |
+          echo "=== runner ==="; uname -a; nproc; free -h; df -h . /mnt 2>/dev/null || true
+          WORK="${RUNNER_TEMP}/buntos-work"
+          mkdir -p "$WORK/build" "$WORK/cache"
+          {
+            echo "WORK=$WORK"
+            echo "BUNTOS_BUILD_DIR=$WORK/build"
+            echo "CARGO_TARGET_DIR=$WORK/build/cargo-target"
+            echo "BUNTOS_CARGO_CACHE=$WORK/cache/cargo-debian"
+            echo "XDG_CACHE_HOME=$WORK/cache"
+          } >>"$GITHUB_ENV"
+          free_gb() { df -B1 "$1" | tail -1 | awk '{printf "%.0f", $4/1024/1024/1024}'; }
+          echo "free GB: $(free_gb "$WORK")"
+
+      - name: 安装基础依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential flex bison bc libssl-dev libncurses-dev libelf-dev dwarves \
+            rsync curl xz-utils zstd lz4 cpio gzip python3 kmod file wget git \
+            busybox-static unzip squashfs-tools openssl debian-archive-keyring \
+            python3-venv pipx docker.io
+          echo "mkosi version pinned in tools/devvm/setup.sh"
+          python3 -m pip install --break-system-packages pipx
+          python3 -m pipx install "git+https://github.com/systemd/mkosi.git@$(sed -n 's/^MKOSI_VERSION=//p' tools/devvm/setup.sh)"
+          echo "$(python3 -m pipx environment --value PIPX_BIN_DIR)" >> "$GITHUB_PATH"
+          sudo systemctl start docker || true
+          docker version 2>&1 | head -8
+
+      - name: 内核 deb (build.sh image)
+        id: kernel
+        timeout-minutes: 180
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          export BUNTOS_BUILD_DIR
+          kernel/tb375fc/build.sh image
+          echo "=== kernel debs ==="
+          find "$BUNTOS_BUILD_DIR/tb375fc/deb" -name 'linux-image-*arm64.deb' -ls
+
+      - name: mesa 设备包
+        id: mesa
+        timeout-minutes: 60
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          export BUNTOS_BUILD_DIR
+          bsp/lenovo-tb375fc/mesa/build.sh
+          ls -lh "$BUNTOS_BUILD_DIR/tb375fc/mesa-deb" 2>/dev/null || true
+
+      - name: upower 设备包
+        id: upower
+        timeout-minutes: 40
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          export BUNTOS_BUILD_DIR
+          bsp/lenovo-tb375fc/upower/build.sh
+          ls -lh "$BUNTOS_BUILD_DIR/tb375fc/upower-deb" 2>/dev/null || true
+
+      - name: vaapi 设备包
+        id: vaapi
+        timeout-minutes: 40
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          export BUNTOS_BUILD_DIR
+          bsp/lenovo-tb375fc/vaapi/build.sh
+          ls -lh "$BUNTOS_BUILD_DIR/tb375fc/vaapi-deb" 2>/dev/null || true
+
+      - name: 工具树 (Debian 13, Docker)
+        id: tools
+        timeout-minutes: 30
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          tools/image/tools-tree.sh "$WORK/tools"
+          echo "BUNTOS_TOOLS_TREE=$WORK/tools" >>"$GITHUB_ENV"
+
+      - name: 自研 Rust 组件
+        id: components
+        timeout-minutes: 50
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          tools/image/cargo-debian.sh build --release --locked --workspace
+
+      - name: 完整镜像 (build.sh lenovo-tb375fc)
+        id: image
+        timeout-minutes: 120
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          df -h "$WORK"
+          BUNTOS_CARGO="$PWD/tools/image/cargo-debian.sh" tools/image/build.sh "$BOARD"
+          echo "=== image output ==="
+          ls -lh "$BUNTOS_BUILD_DIR/$BOARD"
+
+      - name: 打包产物
+        if: always()
+        run: |
+          S="$BUNTOS_BUILD_DIR/artifacts"
+          mkdir -p "$S"
+          # 内核 deb + 设备 deb + boot 镜像 + root 分区
+          find "$BUNTOS_BUILD_DIR/tb375fc" -maxdepth 2 -type f \
+            \( -name '*.deb' -o -name '*.img' -o -name '*.raw' \) \
+            -exec cp -n {} "$S/" \; 2>/dev/null || true
+          find "$BUNTOS_BUILD_DIR/$BOARD" -maxdepth 1 -type f \
+            \( -name '*.raw' -o -name '*.img' -o -name '*.efi' \) \
+            -exec cp -n {} "$S/" \; 2>/dev/null || true
+          echo "=== artifacts ==="; ls -lh "$S"
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tb375fc-official-full
+          path: ${{ env.BUNTOS_BUILD_DIR }}/artifacts/*
+          retention-days: 30
+          if-no-files-found: warn
