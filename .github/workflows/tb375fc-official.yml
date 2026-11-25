@@ -78,9 +78,20 @@ jobs:
         run: |
           cd "$GITHUB_WORKSPACE"
           ls -lh "$BUNTOS_BUILD_DIR/tb375fc/src/" 2>/dev/null || true
-          kernel/tb375fc/build.sh image
-          echo "=== kernel debs ==="
-          find "$BUNTOS_BUILD_DIR/tb375fc/deb" -name 'linux-image-*arm64.deb' -ls
+          set +e
+          kernel/tb375fc/build.sh image 2>&1 | tee "$RUNNER_TEMP/kernel-build.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "=== kernel build rc=$rc, last 60 lines ==="
+          tail -60 "$RUNNER_TEMP/kernel-build.log"
+          # 错误写进 step summary, 这样 API 能读到 (日志下载被代理挡着)
+          {
+            echo "### kernel build rc=$rc"
+            echo '```'
+            tail -80 "$RUNNER_TEMP/kernel-build.log"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+          exit "$rc"
 
       - name: mesa 设备包
         id: mesa
