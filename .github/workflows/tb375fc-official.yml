@@ -55,15 +55,19 @@ jobs:
           gcc --version | head -1; make --version | head -1
           docker version 2>&1 | head -8
 
-      - name: Debian 验签 keyring
-        # debian-config.sh 要 /usr/share/keyrings/debian-archive-keyring.pgp (Debian 13 的文件名)。
-        # Ubuntu 只有 .gpg, 从 Debian trixie 容器拷 .pgp 出来。
+      - name: Debian 验签工具链
+        # debian-config.sh 要 Debian 13 的 sqv (--signature-file 参数) 和 .pgp keyring。
+        # Ubuntu 的 sqv 是旧版(位置参数), 从 Debian trixie 容器拷两者出来。
         run: |
-          sudo docker run --rm -v /tmp/buntos-keyring:/out debian:trixie \
-            bash -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends debian-archive-keyring && cp /usr/share/keyrings/debian-archive-keyring.pgp /out/' 2>&1 | tail -5
-          sudo cp /tmp/buntos-keyring/debian-archive-keyring.pgp /usr/share/keyrings/
-          ls -l /usr/share/keyrings/debian-archive-keyring.pgp
-          which sqv && sqv --version
+          sudo mkdir -p /tmp/buntos-d12 /usr/local/buntos-bin
+          sudo docker run --rm -v /tmp/buntos-d12:/out debian:trixie \
+            bash -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends debian-archive-keyring sqv && cp /usr/share/keyrings/debian-archive-keyring.pgp /out/ && cp /usr/bin/sqv /out/' 2>&1 | tail -5
+          sudo cp /tmp/buntos-d12/debian-archive-keyring.pgp /usr/share/keyrings/
+          sudo cp /tmp/buntos-d12/sqv /usr/local/buntos-bin/sqv
+          sudo chmod +x /usr/local/buntos-bin/sqv
+          echo "/usr/local/buntos-bin" >>"$GITHUB_PATH"
+          ls -l /usr/share/keyrings/debian-archive-keyring.pgp /usr/local/buntos-bin/sqv
+          /usr/local/buntos-bin/sqv --version
 
       - name: mkosi
         # 完全照抄作者 x86-64.yml 的 mkosi 安装
