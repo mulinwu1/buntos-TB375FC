@@ -63,6 +63,11 @@ jobs:
         run: |
           WORK="$RUNNER_TEMP/buntos-work"; mkdir -p "$WORK"
           tools/image/tools-tree.sh "$WORK/tools"
+          # mkosi 在工具树里调 apt-ftparchive (建本地包仓库), tools-tree.sh 没装 apt-utils。
+          # 工具树是 Debian 13 rootfs, 用 chroot 补装。
+          sudo chroot "$WORK/tools" apt-get update -qq 2>&1 | tail -2
+          sudo chroot "$WORK/tools" apt-get install -y -qq --no-install-recommends apt-utils 2>&1 | tail -3
+          ls -l "$WORK/tools/usr/bin/apt-ftparchive"
           echo "BUNTOS_TOOLS_TREE=$WORK/tools" >>"$GITHUB_ENV"
           echo "WORK=$WORK" >>"$GITHUB_ENV"
 
