@@ -34,11 +34,11 @@ jobs:
         run: |
           echo "=== runner ==="; uname -a; nproc; free -h; df -h . /mnt 2>/dev/null || true
           WORK="${RUNNER_TEMP}/buntos-work"
-          mkdir -p "$WORK/build" "$WORK/cache"
+          mkdir -p "$WORK/cache" /home/runner/buntos-build
           {
             echo "WORK=$WORK"
-            echo "BUNTOS_BUILD_DIR=$WORK/build"
-            echo "CARGO_TARGET_DIR=$WORK/build/cargo-target"
+            echo "BUNTOS_BUILD_DIR=/home/runner/buntos-build"
+            echo "CARGO_TARGET_DIR=/home/runner/buntos-build/cargo-target"
             echo "BUNTOS_CARGO_CACHE=$WORK/cache/cargo-debian"
             echo "XDG_CACHE_HOME=$WORK/cache"
           } >>"$GITHUB_ENV"
@@ -64,12 +64,20 @@ jobs:
           echo "$bin" >>"$GITHUB_PATH"
           "$bin/mkosi" --version
 
+      - name: 恢复内核源码 cache
+        # 复用之前 build.sh all 下载的源码(curl cdn.kernel.org 在 runner 上超时)。
+        # 旧 cache 路径是 /home/runner/buntos-build/tb375fc, 这里恢复整个 build 目录。
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/buntos-build/tb375fc
+          key: tb375fc-kernel-v1
+
       - name: 内核 deb (build.sh image)
         id: kernel
-        timeout-minutes: 180
+        timeout-minutes: 240
         run: |
           cd "$GITHUB_WORKSPACE"
-          export BUNTOS_BUILD_DIR
+          ls -lh "$BUNTOS_BUILD_DIR/tb375fc/src/" 2>/dev/null || true
           kernel/tb375fc/build.sh image
           echo "=== kernel debs ==="
           find "$BUNTOS_BUILD_DIR/tb375fc/deb" -name 'linux-image-*arm64.deb' -ls
