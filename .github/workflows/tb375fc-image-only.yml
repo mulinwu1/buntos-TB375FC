@@ -27,6 +27,9 @@ jobs:
 
       - name: 基础依赖 + mkosi
         run: |
+          # AppArmor 会拦住 mkosi 的非特权 userns (作者 x86 workflow 有这两步)
+          sudo sysctl --ignore --write kernel.apparmor_restrict_unprivileged_unconfined=0
+          sudo sysctl --ignore --write kernel.apparmor_restrict_unprivileged_userns=0
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             flex bison bc libssl-dev libelf-dev dwarves rsync \
