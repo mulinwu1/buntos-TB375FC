@@ -34,7 +34,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             flex bison bc libssl-dev libelf-dev dwarves rsync \
             xz-utils zstd lz4 cpio kmod debian-archive-keyring sqv \
-            build-essential debhelper libdw-dev equivs curl unzip
+            build-essential debhelper libdw-dev equivs curl unzip apt-utils
           mkosi_version=$(sed -n 's/^MKOSI_VERSION=//p' tools/devvm/setup.sh)
           pipx install "git+https://github.com/systemd/mkosi.git@$mkosi_version"
           bin=$(pipx environment --value PIPX_BIN_DIR)
