@@ -94,14 +94,22 @@ jobs:
           set -e
           echo "=== kernel build rc=$rc, last 60 lines ==="
           tail -60 "$RUNNER_TEMP/kernel-build.log"
-          # 错误写进 step summary, 这样 API 能读到 (日志下载被代理挡着)
-          {
-            echo "### kernel build rc=$rc"
-            echo '```'
-            tail -80 "$RUNNER_TEMP/kernel-build.log"
-            echo '```'
-          } >>"$GITHUB_STEP_SUMMARY"
+          # 用 ::error:: annotation 输出关键错误行 (Annotations 区 WebFetch 能读到)
+          grep -iE 'error|failed|not found|no such|cannot|fatal|exit|missing' "$RUNNER_TEMP/kernel-build.log" | tail -15 | while IFS= read -r line; do
+            echo "::error::${line:0:300}"
+          done
+          # 完整日志上传 artifact
+          mkdir -p "$RUNNER_TEMP/diag"
+          cp "$RUNNER_TEMP/kernel-build.log" "$RUNNER_TEMP/diag/"
           exit "$rc"
+
+      - name: Upload kernel diag
+        if: failure() && steps.kernel.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-build-diag
+          path: ${{ runner.temp }}/diag/kernel-build.log
+          retention-days: 3
 
       - name: mesa 设备包
         id: mesa
