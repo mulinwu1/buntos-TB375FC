@@ -51,9 +51,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             flex bison bc libssl-dev libelf-dev dwarves rsync \
-            xz-utils zstd lz4 cpio kmod
+            xz-utils zstd lz4 cpio kmod debian-archive-keyring sqv
           gcc --version | head -1; make --version | head -1
           docker version 2>&1 | head -8
+
+      - name: Debian 验签 keyring
+        # debian-config.sh 要 /usr/share/keyrings/debian-archive-keyring.pgp (Debian 13 的文件名)。
+        # Ubuntu 只有 .gpg, 从 Debian trixie 容器拷 .pgp 出来。
+        run: |
+          sudo docker run --rm -v /tmp/buntos-keyring:/out debian:trixie \
+            bash -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends debian-archive-keyring && cp /usr/share/keyrings/debian-archive-keyring.pgp /out/' 2>&1 | tail -5
+          sudo cp /tmp/buntos-keyring/debian-archive-keyring.pgp /usr/share/keyrings/
+          ls -l /usr/share/keyrings/debian-archive-keyring.pgp
+          which sqv && sqv --version
 
       - name: mkosi
         # 完全照抄作者 x86-64.yml 的 mkosi 安装
