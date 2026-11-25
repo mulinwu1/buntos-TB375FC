@@ -1,0 +1,102 @@
+name: TB375FC image assembly only
+
+# 从 release 下载已构建的 deb (跳过1小时内核编译), 只跑 mkosi 镜像组装。
+# 用于调试完整的 build.sh lenovo-tb375fc 步骤。不改项目源码。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  assemble:
+    name: Assemble full image (reuse debs)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    env:
+      MKOSI_FORCE_USERNS_FALLBACK: "1"
+      BOARD: lenovo-tb375fc
+      BUNTOS_BUILD_DIR: /home/runner/buntos-build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: 基础依赖 + mkosi
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            flex bison bc libssl-dev libelf-dev dwarves rsync \
+            xz-utils zstd lz4 cpio kmod debian-archive-keyring sqv \
+            build-essential debhelper libdw-dev equivs curl unzip
+          mkosi_version=$(sed -n 's/^MKOSI_VERSION=//p' tools/devvm/setup.sh)
+          pipx install "git+https://github.com/systemd/mkosi.git@$mkosi_version"
+          bin=$(pipx environment --value PIPX_BIN_DIR)
+          echo "$bin" >>"$GITHUB_PATH"
+          "$bin/mkosi" --version
+          mkdir -p "$BUNTOS_BUILD_DIR/tb375fc"/{deb,mesa-deb,upower-deb,vaapi-deb}
+
+      - name: 下载预编译 deb
+        run: |
+          cd /tmp
+          gh release download tb375fc-prebuilt-v1 --repo mulinwu1/buntos-TB375FC
+          echo "=== downloaded ==="; ls -lh *.deb
+          B="$BUNTOS_BUILD_DIR/tb375fc"
+          for f in linux-image-*.deb linux-headers-*.deb; do cp "$f" "$B/deb/"; done
+          cp buntos-mesa_*.deb "$B/mesa-deb/"
+          cp buntos-upower_*.deb "$B/upower-deb/"
+          cp buntos-tb375fc-vaapi_*.deb "$B/vaapi-deb/"
+          echo "=== placed ==="
+          find "$B" -name '*.deb' -exec ls -lh {} \;
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: 工具树 (Debian 13, Docker)
+        id: tools
+        timeout-minutes: 30
+        run: |
+          WORK="$RUNNER_TEMP/buntos-work"; mkdir -p "$WORK"
+          tools/image/tools-tree.sh "$WORK/tools"
+          echo "BUNTOS_TOOLS_TREE=$WORK/tools" >>"$GITHUB_ENV"
+          echo "WORK=$WORK" >>"$GITHUB_ENV"
+
+      - name: 自研 Rust 组件
+        id: components
+        timeout-minutes: 60
+        run: |
+          tools/image/cargo-debian.sh build --release --locked --workspace
+
+      - name: 完整镜像 (build.sh lenovo-tb375fc)
+        id: image
+        timeout-minutes: 120
+        run: |
+          set +e
+          BUNTOS_CARGO="$PWD/tools/image/cargo-debian.sh" tools/image/build.sh "$BOARD" 2>&1 | tee "$RUNNER_TEMP/image-build.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "=== image build rc=$rc, last 80 lines ==="
+          tail -80 "$RUNNER_TEMP/image-build.log"
+          mkdir -p "$RUNNER_TEMP/diag"
+          cp "$RUNNER_TEMP/image-build.log" "$RUNNER_TEMP/diag/"
+          exit "$rc"
+
+      - name: Upload image diag
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-build-diag
+          path: ${{ runner.temp }}/diag/image-build.log
+          retention-days: 5
+          if-no-files-found: warn
+
+      - name: Upload image
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tb375fc-full-image
+          path: ${{ env.BUNTOS_BUILD_DIR }}/${{ env.BOARD }}/*
+          retention-days: 30
+          if-no-files-found: warn
