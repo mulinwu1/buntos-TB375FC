@@ -56,16 +56,11 @@ jobs:
           gcc --version | head -1; make --version | head -1
           docker version 2>&1 | head -8
           # 内核 bindeb-pkg 要 debhelper-compat (= 12); Ubuntu 只提供 13。造一个提供 12 的空包满足依赖检查。
-          cat >/tmp/dh-compat12 <<'EOF'
-Package: debhelper-compat
-Version: 12
-Section: misc
-Priority: optional
-Architecture: all
-Maintainer: local <local@localhost>
-Provides: debhelper-compat (= 12)
-Description: local debhelper-compat 12 shim
-EOF
+          printf '%s\n' \
+            'Package: debhelper-compat' 'Version: 12' 'Section: misc' 'Priority: optional' \
+            'Architecture: all' 'Maintainer: local <local@localhost>' \
+            'Provides: debhelper-compat (= 12)' 'Description: local debhelper-compat 12 shim' \
+            >/tmp/dh-compat12
           cd /tmp && equivs-build dh-compat12 >/dev/null 2>&1
           sudo dpkg -i /tmp/debhelper-compat_12_all.deb 2>&1 | tail -2
           dpkg-query -W -f='${Provides}\n' debhelper-compat
