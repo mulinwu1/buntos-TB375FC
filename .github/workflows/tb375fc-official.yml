@@ -51,9 +51,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             flex bison bc libssl-dev libelf-dev dwarves rsync \
-            xz-utils zstd lz4 cpio kmod debian-archive-keyring sqv
+            xz-utils zstd lz4 cpio kmod debian-archive-keyring sqv \
+            build-essential debhelper libdw-dev equivs
           gcc --version | head -1; make --version | head -1
           docker version 2>&1 | head -8
+          # 内核 bindeb-pkg 要 debhelper-compat (= 12); Ubuntu 只提供 13。造一个提供 12 的空包满足依赖检查。
+          cat >/tmp/dh-compat12 <<'EOF'
+Package: debhelper-compat
+Version: 12
+Section: misc
+Priority: optional
+Architecture: all
+Maintainer: local <local@localhost>
+Provides: debhelper-compat (= 12)
+Description: local debhelper-compat 12 shim
+EOF
+          cd /tmp && equivs-build dh-compat12 >/dev/null 2>&1
+          sudo dpkg -i /tmp/debhelper-compat_12_all.deb 2>&1 | tail -2
+          dpkg-query -W -f='${Provides}\n' debhelper-compat
 
       - name: Debian 验签工具链
         # debian-config.sh 要 Debian 13 的 sqv (--signature-file 参数) 和 .pgp keyring。
