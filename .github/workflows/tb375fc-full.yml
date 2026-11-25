@@ -91,7 +91,7 @@ jobs:
         run: |
           B="$HOME/buntos-build/tb375fc"
           K="$B/out/arch/arm64/boot"
-          CMDLINE="console=ttyS0,921600n8 console=tty0 earlycon clk_ignore_unused pd_ignore_unused regulator_ignore_unused buntos.wait=1"
+          CMDLINE="console=ttyS0,921600n8 console=tty0 earlycon clk_ignore_unused pd_ignore_unused regulator_ignore_unused root=PARTLABEL=airoot rootfstype=ext4 rw panic=30 buntos.usbdebug=1"
           bsp/lenovo-tb375fc/boot/mkimages.sh \
             --kernel "$K/Image" \
             --dtb "$K/dts/mediatek/mt6897-lenovo-tb375fc.dtb" \
