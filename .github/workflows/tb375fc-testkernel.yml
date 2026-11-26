@@ -56,7 +56,7 @@ jobs:
               apt-get install -y -qq --no-install-recommends \
                 mkbootimg lz4 cpio device-tree-compiler busybox-static python3 \
                 kmod zstd curl ca-certificates xz-utils flex bison bc \
-                libssl-dev libelf-dev dwarves rsync >/dev/null
+                libssl-dev libelf-dev dwarves rsync gcc >/dev/null
               echo "=== tools ==="; which mkbootimg lz4 dtc cpio
 
               B=/build; T=$B/linux-7.2.12-tb375fc; O=$B/out; K=$O/arch/arm64/boot; W=$B/test-kernel
@@ -76,9 +76,10 @@ jobs:
               grep -o "root=PARTLABEL=[^ ]*" "$W/test.dts" | head -1
 
               cpp -nostdinc -I /private \
+                -I /repo/kernel/tb375fc/test-kernel \
                 -I "$T/arch/arm64/boot/dts/mediatek" -I "$T/arch/arm64/boot/dts" \
                 -I "$T/include" -I "$T/scripts/dtc/include-prefixes" \
-                -undef -D__DTS__ -x assembler-with-cpp "$W/test.dts" > "$W/test.pre.dts" 2>/dev/null
+                -undef -D__DTS__ -x assembler-with-cpp "$W/test.dts" > "$W/test.pre.dts"
               dtc -q -I dts -O dtb -i "$T/arch/arm64/boot/dts/mediatek" -o "$W/test.dtb" "$W/test.pre.dts"
               echo "test.dtb built: $(stat -c%s "$W/test.dtb") bytes"
               fdtget -t s "$W/test.dtb" /chosen bootargs
