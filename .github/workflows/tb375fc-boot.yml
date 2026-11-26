@@ -1,0 +1,113 @@
+name: TB375FC boot images
+
+# 原样跑项目的 mkinitramfs.sh + mkimages.sh 生成 LK 读的 boot 四件套。
+# 输入: release tb375fc-prebuilt-v1 里的内核 deb (含 vmlinuz + DTB + modules)。
+# cmdline 指向 airoot (btrfs)。dtbo 按作者文档前面填 0 跳过 LK 签名检查。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  boot:
+    name: Build boot images
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: 工具链
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            lz4 cpio device-tree-compiler busybox-static binutils \
+            zstd python3 curl
+          # 原生 mkbootimg (支持 header v4 + vendor_boot 复杂参数)
+          # Debian 的 mkbootimg 包来自 AOSP; Ubuntu 24.04 arm64 也有
+          sudo apt-get install -y --no-install-recommends mkbootimg 2>&1 | tail -3 || {
+            echo "apt mkbootimg unavailable, building from AOSP..."
+            git clone --depth 1 https://android.googlesource.com/platform/system/tools/mkbootimg mkbootimg-src
+            cd mkbootimg-src && mkdir -p build && cd build
+            cmake .. >/dev/null 2>&1 && make -j4 >/dev/null 2>&1
+            sudo cp mkbootimg /usr/local/bin/
+          }
+          mkbootimg --help 2>&1 | head -3 || true
+          which mkbootimg lz4 dtc cpio
+          lz4 --version | head -1; dtc --version 2>&1 | head -1
+
+      - name: 下载并解包内核 deb
+        run: |
+          gh release download tb375fc-prebuilt-v1 --repo mulinwu1/buntos-TB375FC \
+            --pattern 'linux-image-*.deb' --dir /tmp/kdeb
+          KDIR=/tmp/kroot
+          mkdir -p "$KDIR"
+          dpkg-deb -x /tmp/kdeb/linux-image-*.deb "$KDIR"
+          echo "=== vmlinuz ==="; find "$KDIR/boot" -name 'vmlinuz*' -ls
+          echo "=== dtb ==="; find "$KDIR/usr/lib/linux-image-"* -name 'mt6897-lenovo-tb375fc.dtb' -ls
+          echo "=== modules ==="; ls -d "$KDIR/lib/modules/"*
+          # 复制到统一位置
+          VMLINUZ=$(find "$KDIR/boot" -name 'vmlinuz*' | head -1)
+          DTB=$(find "$KDIR/usr/lib/linux-image-"* -name 'mt6897-lenovo-tb375fc.dtb' | head -1)
+          cp "$VMLINUZ" /tmp/kernel-Image
+          cp "$DTB" /tmp/board.dtb
+          echo "KROOT=$KDIR" >>"$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: 生成 initramfs
+        run: |
+          mkdir -p "$HOME/buntos-build/tb375fc/images"
+          BSP=bsp/lenovo-tb375fc/initramfs/mkinitramfs.sh
+          "$BSP" --modules "$KROOT" \
+            --out "$HOME/buntos-build/tb375fc/images/initramfs.cpio.lz4"
+          ls -lh "$HOME/buntos-build/tb375fc/images/initramfs.cpio.lz4"
+
+      - name: 生成 boot 四件套
+        id: images
+        run: |
+          set +e
+          bsp/lenovo-tb375fc/boot/mkimages.sh \
+            --kernel /tmp/kernel-Image \
+            --dtb /tmp/board.dtb \
+            --initramfs "$HOME/buntos-build/tb375fc/images/initramfs.cpio.lz4" \
+            --cmdline "console=ttyS0,921600n8 console=tty0 earlycon clk_ignore_unused pd_ignore_unused regulator_ignore_unused root=PARTLABEL=airoot rootfstype=btrfs rw systemd.firstboot=no buntos.usbdebug=1" \
+            --out /tmp/boot-images 2>&1 | tee "$RUNNER_TEMP/boot-build.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          tail -40 "$RUNNER_TEMP/boot-build.log"
+          mkdir -p "$RUNNER_TEMP/diag"; cp "$RUNNER_TEMP/boot-build.log" "$RUNNER_TEMP/diag/"
+          exit "$rc"
+
+      - name: dtbo 前面填 0 (LK workaround)
+        # 作者文档: LK 即使解锁也要求带 DT 表的 dtbo 有签名, 前面填 0 跳过
+        run: |
+          D=/tmp/boot-images/dtbo.img
+          sz=$(stat -c%s "$D")
+          # 前 4096 字节填 0, 原内容后移
+          { head -c 4096 /dev/zero; cat "$D"; } > "$D.zeroed"
+          mv "$D.zeroed" "$D"
+          echo "dtbo zero-padded: $(stat -c%s "$D") bytes (was $sz)"
+          for f in /tmp/boot-images/*.img; do ls -lh "$f"; done
+
+      - name: Upload boot images
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tb375fc-boot-images
+          path: /tmp/boot-images/*.img
+          retention-days: 30
+
+      - name: Upload boot diag
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-build-diag
+          path: ${{ runner.temp }}/diag/boot-build.log
+          retention-days: 5
+          if-no-files-found: warn
