@@ -56,7 +56,7 @@ jobs:
               apt-get install -y -qq --no-install-recommends \
                 mkbootimg lz4 cpio device-tree-compiler busybox-static python3 \
                 kmod zstd curl ca-certificates xz-utils flex bison bc \
-                libssl-dev libelf-dev dwarves rsync gcc >/dev/null
+                libssl-dev libelf-dev dwarves rsync gcc make >/dev/null
               echo "=== tools ==="; which mkbootimg lz4 dtc cpio
 
               B=/build; T=$B/linux-7.2.12-tb375fc; O=$B/out; K=$O/arch/arm64/boot; W=$B/test-kernel
