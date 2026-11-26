@@ -54,10 +54,10 @@ jobs:
               apt-get update -qq
               apt-get install -y -qq --no-install-recommends \
                 mkbootimg lz4 cpio device-tree-compiler busybox-static python3 \
-                kmod zstd curl ca-certificates >/dev/null
+                kmod zstd curl ca-certificates xz-utils >/dev/null
               echo "=== tools ==="
-              which mkbootimg lz4 dtc cpio busybox
-              mkbootimg --help 2>&1 | head -2 || true
+              which mkbootimg lz4 dtc cpio busybox xz
+              mkbootimg --help 2>&1 || true
               mkdir -p /root/buntos-build/tb375fc/images
               echo "=== mkinitramfs ==="
               /repo/bsp/lenovo-tb375fc/initramfs/mkinitramfs.sh \
