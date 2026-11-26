@@ -1,0 +1,125 @@
+name: TB375FC test-kernel boot
+
+# 作者验证过的唯一启动路径: test-kernel (DTB + initramfs 内嵌进内核, 忽略 LK 传的树)。
+# 复刻 kernel/tb375fc/test-kernel/build-test.sh 的编译步骤, 跳过两个保守检查
+# (lk-private.dtsi / atag,devinfo 缺失只是 LVTS 热保护没校准, 不影响启动)。
+# 复用: release tb375fc-prebuilt-v1 的内核 deb + cache 里的内核源码树。
+# cmdline 改成 root=PARTLABEL=airoot (我们的分区名)。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build test-kernel boot.img
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: 恢复内核源码 cache
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/buntos-build/tb375fc
+          key: tb375fc-kernel-v1
+
+      - name: 下载并解包内核 deb
+        run: |
+          gh release download tb375fc-prebuilt-v1 --repo mulinwu1/buntos-TB375FC \
+            --pattern 'linux-image-*.deb' --dir /tmp/kdeb
+          mkdir -p /tmp/kroot
+          dpkg-deb -x /tmp/kdeb/linux-image-*.deb /tmp/kroot
+          echo "=== modules ==="; ls -d /tmp/kroot/lib/modules/* || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Debian 13 容器里编译 test-kernel
+        id: tk
+        run: |
+          set +e
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/repo:ro" \
+            -v /tmp/kroot:/kroot:ro \
+            -v /home/runner/buntos-build/tb375fc:/build \
+            -v /tmp/tk-out:/out \
+            -v /tmp/tk-private:/private \
+            debian:trixie bash -euo pipefail -c '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends \
+                mkbootimg lz4 cpio device-tree-compiler busybox-static python3 \
+                kmod zstd curl ca-certificates xz-utils flex bison bc \
+                libssl-dev libelf-dev dwarves rsync >/dev/null
+              echo "=== tools ==="; which mkbootimg lz4 dtc cpio
+
+              B=/build; T=$B/linux-7.2.12-tb375fc; O=$B/out; K=$O/arch/arm64/boot; W=$B/test-kernel
+              [[ -d $T && -f $O/.config ]] || { echo "ERR: kernel source tree missing in cache"; exit 1; }
+              mkdir -p "$W" /out
+
+              echo "=== mkinitramfs ==="
+              /repo/bsp/lenovo-tb375fc/initramfs/mkinitramfs.sh \
+                --modules /kroot --out "$B/images/initramfs.cpio.lz4"
+              ls -lh "$B/images/initramfs.cpio.lz4"
+
+              echo "=== prepare test dts (no lk-private: __has_include skips efuse) ==="
+              # 改 cmdline: buntos -> airoot, 去掉 rootflags=subvol=buntos-full
+              sed -e "s/root=PARTLABEL=buntos /root=PARTLABEL=airoot /" \
+                  -e "s/rootflags=subvol=buntos-full //" \
+                  /repo/kernel/tb375fc/test-kernel/mt6897-lenovo-tb375fc-test.dts > "$W/test.dts"
+              grep -o "root=PARTLABEL=[^ ]*" "$W/test.dts" | head -1
+
+              cpp -nostdinc -I /private \
+                -I "$T/arch/arm64/boot/dts/mediatek" -I "$T/arch/arm64/boot/dts" \
+                -I "$T/include" -I "$T/scripts/dtc/include-prefixes" \
+                -undef -D__DTS__ -x assembler-with-cpp "$W/test.dts" > "$W/test.pre.dts" 2>/dev/null
+              dtc -q -I dts -O dtb -i "$T/arch/arm64/boot/dts/mediatek" -o "$W/test.dtb" "$W/test.pre.dts"
+              echo "test.dtb built: $(stat -c%s "$W/test.dtb") bytes"
+              fdtget -t s "$W/test.dtb" /chosen bootargs
+
+              echo "=== builtin-dtb (kernel ignores LK tree) ==="
+              python3 -I /repo/kernel/tb375fc/test-kernel/builtin-dtb.py "$T" "$W/test.dtb"
+
+              echo "=== recompile Image with initramfs ==="
+              "$T/scripts/config" --file "$O/.config" --set-str INITRAMFS_SOURCE "$B/images/initramfs.cpio.lz4" -e RD_LZ4
+              touch "$T/arch/arm64/kernel/tb375fc-dtb.S"
+              make -C "$T" O="$O" ARCH=arm64 LOCALVERSION= olddefconfig >/dev/null
+              make -C "$T" O="$O" ARCH=arm64 LOCALVERSION= -j"$(nproc)" Image 2>&1 | tail -8
+              ls -lh "$K/Image"
+
+              echo "=== mkimages (test-kernel: cmdline from built-in tree) ==="
+              /repo/bsp/lenovo-tb375fc/boot/mkimages.sh \
+                --kernel "$K/Image" --dtb "$W/test.dtb" \
+                --initramfs "$B/images/initramfs.cpio.lz4" \
+                --cmdline "console=tty0 ignore_loglevel" \
+                --out /out
+              echo "=== done ==="; ls -lh /out
+            ' 2>&1 | tee "$RUNNER_TEMP/tk-build.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          tail -40 "$RUNNER_TEMP/tk-build.log"
+          mkdir -p "$RUNNER_TEMP/diag"; cp "$RUNNER_TEMP/tk-build.log" "$RUNNER_TEMP/diag/"
+          exit "$rc"
+
+      - name: Upload test-kernel boot.img
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tb375fc-testkernel-boot
+          path: /tmp/tk-out/*.img
+          retention-days: 30
+
+      - name: Upload diag
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tk-build-diag
+          path: ${{ runner.temp }}/diag/tk-build.log
+          retention-days: 5
+          if-no-files-found: warn
