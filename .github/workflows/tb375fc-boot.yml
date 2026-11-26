@@ -80,15 +80,10 @@ jobs:
           mkdir -p "$RUNNER_TEMP/diag"; cp "$RUNNER_TEMP/boot-build.log" "$RUNNER_TEMP/diag/"
           exit "$rc"
 
-      - name: dtbo 前面填 0 (LK workaround)
-        # 作者文档: LK 即使解锁也要求带 DT 表的 dtbo 有签名, 前面填 0 跳过
+      - name: 列出镜像
         run: |
-          D=/tmp/boot-images/dtbo.img
-          sz=$(stat -c%s "$D")
-          { head -c 4096 /dev/zero; cat "$D"; } > "$D.zeroed"
-          mv "$D.zeroed" "$D"
-          echo "dtbo zero-padded: $(stat -c%s "$D") bytes (was $sz)"
-          for f in /tmp/boot-images/*.img; do ls -lh "$f"; done
+          ls -l /tmp/boot-images/
+          echo "=== 文件数 ==="; ls /tmp/boot-images/*.img | wc -l
 
       - name: Upload boot images
         if: success()
